@@ -1,0 +1,43 @@
+{
+  "version": "1.0.0",
+  "configurations": [
+    {
+      "name": "Debug YCSB",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/app/build-dbg/ycsb",
+      "args": [
+        "-n",
+        "16",
+        "${workspaceFolder}/app/ycsb/gen-log/ycsb_zipfian_no_cont.txt",
+        "-i",
+        "exp:1000"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}/app/build-dbg",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb"
+    },
+    {
+      "name": "Debug TPCC",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/app/build-dbg/tpcc",
+      "args": [
+        "-n",
+        "16",
+        "${workspaceFolder}/app/tpcc/gen-log/tpcc.txt",
+        "-i",
+        "exp:1000"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}/app/build-dbg",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb"
+    }
+  ]
+}

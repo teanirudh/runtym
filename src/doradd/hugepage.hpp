@@ -139,7 +139,9 @@ void* aligned_alloc_hpage(size_t sz)
   for (size_t i = 0; i < hpage_nr; i++)
   {
     memset(buf, 0, HPAGE_SIZE);
+#ifdef NDEBUG
     check_huge_page(buf);
+#endif
     buf += HPAGE_SIZE;
   }
   printf("allocated huge pages\n");

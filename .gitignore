@@ -2,12 +2,17 @@ app/build/
 app/build-dbg/
 scripts/*.txt
 
+*.pyc
 *.swp
 *.log
 *.out
 *.idx
 *.res
 
+app/ycsb/gen-log/*.txt
+app/tpcc/gen-log/*.txt
+
+app/ycsb/gen-log/generator
 app/tpcc_gen.cc
 
 app/pipeline-profile/pipeline
