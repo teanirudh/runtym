@@ -211,10 +211,8 @@ public:
       if (!counter_registered)
         track_worker_counter();
 
-#ifdef RPC_LATENCY
-      if (txn_log_id >= RPC_LOG_SIZE)
+      if (handled_req_cnt >= RPC_LOG_SIZE)
         break;
-#endif
 
 #if 0
       if (tx_spawn_sum >= spawn_threshold * rnd) [[unlikely]]
@@ -306,7 +304,7 @@ struct Indexer
     int i, ret = 0;
     int batch; // = MAX_BATCH;
 
-    while (1)
+    while (handled_req_cnt < RPC_LOG_SIZE)
     {
       if (read_idx > (read_count - batch))
       {
@@ -364,8 +362,9 @@ struct Prefetcher
     char* prepare_read_head = read_top;
     size_t i;
     size_t batch_sz;
+    uint64_t handled_cnt = 0;
 
-    while (1)
+    while (handled_cnt < RPC_LOG_SIZE)
     {
       if (idx > (read_count - MAX_BATCH))
       {
@@ -399,6 +398,8 @@ struct Prefetcher
         read_head += ret;
         idx++;
       }
+
+      handled_cnt += batch_sz;
 
 #ifdef INDEXER
       ring->push(batch_sz);
@@ -512,15 +513,11 @@ struct Spawner
     // warm-up
     prepare_run();
 
-    // run
-    while (1)
+    while (tx_spawn_sum < RPC_LOG_SIZE)
     {
 #ifdef RPC_LATENCY
       if (txn_log_id == 0)
         last_print = std::chrono::system_clock::now();
-
-      if (txn_log_id > RPC_LOG_SIZE)
-        break;
 #endif
 
       if (!ring->front())

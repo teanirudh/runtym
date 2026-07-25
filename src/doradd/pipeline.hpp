@@ -13,6 +13,15 @@ std::unordered_map<std::thread::id, uint64_t*>* counter_map;
 std::unordered_map<std::thread::id, log_arr_type*>* log_map;
 std::mutex* counter_map_mutex;
 
+static uint64_t calc_tx_exec_sum()
+{
+  std::lock_guard<std::mutex> lock(*counter_map_mutex);
+  uint64_t sum = 0;
+  for (const auto& counter_pair : *counter_map)
+    sum += *(counter_pair.second);
+  return sum;
+}
+
 template<typename T>
 void build_pipelines(int worker_cnt, char* log_name, char* gen_type)
 {
@@ -146,19 +155,19 @@ void build_pipelines(int worker_cnt, char* log_name, char* gen_type)
       rpc_handler.run();
     });
 
-    // flush latency logs
-    std::this_thread::sleep_for(std::chrono::seconds(20));
+    rpc_handler_thread.join();
 #ifdef CORE_PIPE
-    pthread_cancel(spawner_thread.native_handle());
-    pthread_cancel(prefetcher_thread.native_handle());
 #  ifdef INDEXER
-    pthread_cancel(indexer_thread.native_handle());
+    indexer_thread.join();
 #  endif
+    prefetcher_thread.join();
+    spawner_thread.join();
 #else
-    pthread_cancel(extern_thrd.native_handle());
+    extern_thrd.join();
 #endif // CORE_PIPE
 
-    pthread_cancel(rpc_handler_thread.native_handle());
+    while (calc_tx_exec_sum() < RPC_LOG_SIZE)
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
 #ifdef LOG_LATENCY
     printf("flush latency stats\n");

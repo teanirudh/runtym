@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../misc/inter_arrival.hpp"
+#include "config.hpp"
 
 #include <atomic>
 #include <cassert>
@@ -29,27 +30,25 @@ struct RPCHandler
   void run()
   {
     long next_ts = time_ns();
-    int i = 0;
+    uint64_t i = 0;
 
     // spinning and populating cnts
-    while (1)
+    while (i < RPC_LOG_SIZE)
     {
       while (time_ns() < next_ts)
         _mm_pause();
 
 #ifdef RPC_LATENCY
-      if (i >= RPC_LOG_SIZE)
-      {
-        printf("entire reqs are %d\n", i);
-        break;
-      }
       auto* addr =
-        reinterpret_cast<void*>(log_arr + (uint64_t)(i++ * sizeof(ts_type)));
+        reinterpret_cast<void*>(log_arr + (uint64_t)(i * sizeof(ts_type)));
       *reinterpret_cast<ts_type*>(addr) = std::chrono::system_clock::now();
 #endif
 
+      i++;
       avail_cnt->fetch_add(1, std::memory_order_relaxed);
       next_ts += gen_inter_arrival(dist);
     }
+
+    printf("entire reqs are %lu\n", i);
   }
 };
