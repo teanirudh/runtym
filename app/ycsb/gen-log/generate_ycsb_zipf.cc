@@ -115,7 +115,7 @@ int main(int argc, char** argv)
     fprintf(stderr, "distribution should be uniform or zipfian\n");
 
   int contention = 0;
-  if (!strcmp(argv[4], "cont"))
+  if (!strcmp(argv[4], "high_cont"))
   {
     contention = 1;
     printf("generating w/ contended accesses\n");
@@ -130,7 +130,7 @@ int main(int argc, char** argv)
 
   char log_name[50];
   snprintf(log_name, sizeof(log_name), "ycsb_%s_%s.txt", argv[2], argv[4]);
-  
+
   std::ofstream outLog(log_name, std::ios::binary);
   uint32_t count = TX_COUNT;
   outLog.write(reinterpret_cast<const char*>(&count), sizeof(uint32_t));
