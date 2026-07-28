@@ -9,12 +9,14 @@ SUDO := $(if $(filter release,$(MODE)),sudo,)
 
 generate:
 	@case "$(BENCH)" in \
-	  ycsb) test -f $(APP)/ycsb/gen-log/ycsb_zipfian_no_cont.txt || { \
-	          cd $(APP)/ycsb/gen-log && g++ -o generator -O3 generate_ycsb_zipf.cc && \
-	          ./generator -d zipfian -c no_cont; } ;; \
+	  ycsb) test -n "$(DIST)" || { echo "usage: make generate BENCH=ycsb DIST=zipfian|uniform"; exit 1; }; \
+	        cd $(APP)/ycsb/gen-log && \
+	        g++ -o generator -O3 generate_ycsb_zipf.cc; \
+	        ./generator -d $(DIST) -c no_cont; \
+	        ./generator -d $(DIST) -c high_cont ;; \
 	  tpcc) test -f $(APP)/tpcc/gen-log/tpcc.txt || { \
 	          cd $(APP)/tpcc/gen-log && python3 generate_tpcc.py; } ;; \
-	  *) echo "usage: make generate BENCH=ycsb|tpcc"; exit 1 ;; \
+	  *) echo "usage: make generate BENCH=ycsb|tpcc [DIST=zipfian|uniform]"; exit 1 ;; \
 	esac
 
 build:
@@ -23,7 +25,7 @@ build:
 	@test "$(BENCH)" = ycsb -o "$(BENCH)" = tpcc || \
 	  { echo "usage: make build MODE=debug|release BENCH=ycsb|tpcc"; exit 1; }
 	@cmake -S $(APP) -B $(DIR) -G Ninja -DCMAKE_BUILD_TYPE=$(TYPE) \
-	  -DCMAKE_CXX_FLAGS="-DRPC_LATENCY -DLOG_LATENCY" && \
+	  -DCMAKE_CXX_FLAGS="-DRPC_LATENCY -DLOG_LATENCY -g -fno-omit-frame-pointer" && \
 	cmake --build $(DIR) --target $(BENCH) && mkdir -p $(DIR)/results
 
 run:
@@ -41,3 +43,7 @@ run:
 	$(SUDO) taskset -c "$$worker_start-$$worker_end" \
 	  ./$(BENCH) -n $(CORES) $(SOURCE) -i $(INTERVAL); \
 	end=$$(date +%s); echo "Time taken: $$((end - start)) seconds"
+
+clean:
+	rm -rf $(APP)/build
+	rm -rf $(APP)/build-dbg

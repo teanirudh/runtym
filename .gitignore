@@ -16,3 +16,5 @@ app/ycsb/gen-log/generator
 app/tpcc_gen.cc
 
 app/pipeline-profile/pipeline
+
+results/
