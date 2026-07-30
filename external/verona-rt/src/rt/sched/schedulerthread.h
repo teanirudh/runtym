@@ -1,0 +1,435 @@
+// Copyright Microsoft and Project Verona Contributors.
+// SPDX-License-Identifier: MIT
+#pragma once
+
+#include "../debug/systematic.h"
+#include "core.h"
+#include "ds/dllist.h"
+#include "ds/hashmap.h"
+#include "schedulerlist.h"
+#include "schedulerstats.h"
+#include "threadpool.h"
+
+#include <algorithm>
+#include <snmalloc/snmalloc.h>
+
+namespace verona::rt
+{
+  /**
+   * There is typically one scheduler thread pinned to each physical CPU core.
+   * Each scheduler thread is responsible for running cowns in its queue and
+   * periodically stealing cowns from the queues of other scheduler threads.
+   *
+   * Fair distribution of work is amortised across the D-empty event of the
+   * per-core WSQ: each time the owner observes all D[k] empty via
+   * pop_local() (a cheap, D-only probe), it invokes refill_steal(victim),
+   * which simultaneously drains own E and own I into D AND probes one
+   * victim's I/E/D for work, publishing the merged chain to D in a single
+   * release-fence + N relaxed stores.  The natural quiescence boundary IS
+   * the fairness probe -- no token-cown rotation needed.
+   *
+   * Refill_steal uses ProbeOrder::Light (I, D, E) on the per-D-empty path
+   * (small chunks, low victim-side cacheline pressure) and ProbeOrder::Heavy
+   * (I, E, D) inside the blocking steal() spin loop (large chunks, the
+   * blocked thread is willing to bear the cost).
+   */
+  class SchedulerThread
+  {
+  public:
+    /// Friendly thread identifier for logging information.
+    size_t systematic_id = 0;
+
+  private:
+    using Scheduler = ThreadPool<SchedulerThread>;
+    friend Scheduler;
+    friend DLList<SchedulerThread>;
+    friend SchedulerList<SchedulerThread>;
+
+    static constexpr uint64_t TSC_QUIESCENCE_TIMEOUT = 1'000'000;
+
+    // Adaptive back-off control for the steal loop.
+    //
+    // The steal loop spins on `Aal::pause()` while polling its own queue
+    // and stealing from victim queues. After `TSC_QUIESCENCE_TIMEOUT`
+    // nanoseconds without finding work, it enters the pause/sleep
+    // protocol. The check that decides whether the timeout has elapsed
+    // calls `DefaultPal::tick()`, which on platforms without a
+    // user-space cycle counter (e.g. Linux aarch64, where snmalloc's
+    // `Aal::tick()` falls back to `clock_gettime(CLOCK_MONOTONIC)`) is
+    // a syscall and dominates the cost of the back-off loop when many
+    // threads are stealing simultaneously.
+    //
+    // To amortise this, we sample the clock every `budget` iterations
+    // and adapt `budget` so that we end up sampling the clock roughly
+    // `STEAL_TICKS_PER_TIMEOUT` times across one full timeout window
+    // regardless of how fast the loop body is on the current platform.
+    static constexpr uint64_t STEAL_TICKS_PER_TIMEOUT = 10;
+    static constexpr uint64_t STEAL_TARGET_SLICE_NS =
+      TSC_QUIESCENCE_TIMEOUT / STEAL_TICKS_PER_TIMEOUT;
+    static constexpr uint64_t STEAL_INITIAL_BUDGET = 64;
+    // Upper bound on budget (iterations). Even on the fastest loop body
+    // (~1ns per iteration) we want at least one clock sample per target
+    // slice, so cap at STEAL_TARGET_SLICE_NS iterations.
+    static constexpr uint64_t STEAL_MAX_BUDGET = STEAL_TARGET_SLICE_NS;
+
+    Core* core = nullptr;
+#ifdef USE_SYSTEMATIC_TESTING
+    friend class ThreadSyncSystematic<SchedulerThread>;
+    Systematic::Local* local_systematic{nullptr};
+#else
+    friend class ThreadSync<SchedulerThread>;
+    LocalSync local_sync{};
+#endif
+
+    Core* victim = nullptr;
+
+    /// Local work item to avoid overhead of synchronisation
+    /// on scheduler queue.
+    Work* next_work = nullptr;
+
+    bool running = true;
+
+    /// SchedulerList pointers.
+    SchedulerThread* prev = nullptr;
+    SchedulerThread* next = nullptr;
+
+    void (*run_at_termination)(void) = nullptr;
+
+    SchedulerThread()
+    {
+      Logging::cout() << "Scheduler Thread created" << Logging::endl;
+    }
+
+    ~SchedulerThread() {}
+
+    void set_core(Core* core)
+    {
+      this->core = core;
+    }
+
+    inline void stop()
+    {
+      running = false;
+    }
+
+    inline void schedule_fifo(Work* w)
+    {
+      Logging::cout() << "Enqueue work " << w << Logging::endl;
+
+      // If we already have a work item then we need to enqueue it.
+      return_next_work();
+
+      // Save work item locally, this is used for batching.
+      next_work = w;
+    }
+
+    static inline void schedule_lifo(Core* c, Work* w)
+    {
+      // A lifo scheduled cown is coming from an external source, such as
+      // asynchronous I/O.
+      Logging::cout() << "LIFO scheduling work " << w << " onto " << c->affinity
+                      << Logging::endl;
+      c->q.enqueue_front(w);
+      Logging::cout() << "LIFO scheduled work " << w << " onto " << c->affinity
+                      << Logging::endl;
+
+      c->stats.lifo();
+
+      if (Scheduler::get().unpause())
+        c->stats.unpause();
+    }
+
+    template<typename... Args>
+    static void run(SchedulerThread* t, void (*startup)(Args...), Args... args)
+    {
+      t->run_inner(startup, args...);
+    }
+
+    void return_next_work()
+    {
+      if (next_work != nullptr)
+      {
+        core->q.enqueue(next_work);
+        next_work = nullptr;
+        if (Scheduler::get().unpause())
+          core->stats.unpause();
+      }
+    }
+
+    static constexpr size_t BATCH_SIZE = 100;
+    Work* get_work(size_t& batch)
+    {
+      // Check if we have a thread-local work item to use that is not subject
+      // to work stealing.  This is batched, and should not happen more than
+      // BATCH_SIZE times in a row.
+      if (next_work != nullptr && batch != 0)
+      {
+        batch--;
+        return std::exchange(next_work, nullptr);
+      }
+
+      batch = BATCH_SIZE;
+
+      // Hot path: pop one item from our D.  D-only probe; does NOT
+      // touch own E or I (cross-core write-hot lines) until D is empty.
+      auto work = core->q.pop_local();
+      if (work != nullptr)
+      {
+        return_next_work();
+        return work;
+      }
+
+      // D-empty event = fairness probe (F1).  Fused refill + steal:
+      // drains own E and I onto D AND probes one victim (Light order:
+      // I, D, E) in a single publish.  Pair with unpause: stripe_into_
+      // dequeue's release stores must be sequenced-before the unpause
+      // CAS so a third thread that paused inside the transient-empty
+      // window observes the publish.
+      work = core->q.refill_steal(victim->q);
+      victim = victim->next; // F2: advance fairness rotor once per probe.
+      if (work != nullptr)
+      {
+        if (Scheduler::get().unpause())
+          core->stats.unpause();
+        return_next_work();
+        return work;
+      }
+
+      if (next_work != nullptr)
+      {
+        return std::exchange(next_work, nullptr);
+      }
+
+      return steal();
+    }
+
+    /**
+     * Startup is supplied to initialise thread local state before the runtime
+     * starts.
+     *
+     * This is used for initialising the interpreters per-thread data-structures
+     **/
+    template<typename... Args>
+    void run_inner(void (*startup)(Args...), Args... args)
+    {
+      startup(args...);
+
+      Scheduler::local() = this;
+      assert(core != nullptr);
+      victim = core->next;
+      core->servicing_threads++;
+
+#ifdef USE_SYSTEMATIC_TESTING
+      Systematic::attach_systematic_thread(local_systematic);
+#endif
+      size_t batch = BATCH_SIZE;
+      Work* work;
+      while ((work = get_work(batch)))
+      {
+        Logging::cout() << "Schedule work " << work << Logging::endl;
+
+        work->run();
+
+        yield();
+      }
+
+      if (core != nullptr)
+      {
+        auto val = core->servicing_threads.fetch_sub(1);
+        if (val == 1)
+        {
+          Logging::cout() << "Destroying core " << core->affinity
+                          << Logging::endl;
+        }
+      }
+
+      Systematic::finished_thread();
+      if (run_at_termination)
+        run_at_termination();
+
+      // Reset the local thread pointer as this physical thread could be reused
+      // for a different SchedulerThread later.
+      Scheduler::local() = nullptr;
+    }
+
+    Work* steal()
+    {
+      core->stats.steal_attempt();
+      Work* work;
+
+      while (running)
+      {
+#ifndef USE_SYSTEMATIC_TESTING
+        // Timer state for this quiescence window.  Initialised lazily:
+        // tsc_start remains 0 until the first STEAL_INITIAL_BUDGET
+        // iterations elapse without finding work, avoiding the ~700ns
+        // tick() syscall on the common fast-steal path.
+        uint64_t tsc_start = 0;
+        uint64_t tsc_prev = 0;
+        uint64_t budget = STEAL_INITIAL_BUDGET;
+        uint64_t iters_until_check = budget;
+#endif
+
+        while (running)
+        {
+          yield();
+
+          // Drain own E and I if anything arrived during the spin (e.g.
+          // an external schedule_lifo into our inbox).  refill_steal
+          // with self-probe (&victim == this) is a pure drain: no
+          // foreign probe, no steal_index rotation.  Publish into D
+          // creates a transient-empty window; pair with unpause.
+          work = core->q.refill_steal(core->q);
+          if (work != nullptr)
+          {
+            if (Scheduler::get().unpause())
+              core->stats.unpause();
+            return work;
+          }
+
+          // Steal from a foreign victim with the heavy probe order
+          // (I, E, D): the blocked thread prefers a bulky chain even
+          // at higher victim-side cacheline cost.
+          work = core->q.refill_steal<ProbeOrder::Heavy>(victim->q);
+          if (work != nullptr)
+          {
+            core->stats.steal();
+            Logging::cout() << "Stole work " << work << " from "
+                            << victim->affinity << Logging::endl;
+            if (Scheduler::get().unpause())
+              core->stats.unpause();
+            victim = victim->next;
+            return work;
+          }
+
+          // We were unable to steal, move to the next victim thread.
+          victim = victim->next;
+
+#ifdef USE_SYSTEMATIC_TESTING
+          // Only try to pause with 1/(2^5) probability
+          if (!Systematic::coin(5))
+          {
+            yield();
+            continue;
+          }
+          break;
+#else
+          // Spin for `budget` iterations between wall-clock samples.
+          // Counting down lets the hot-path check compile to a single
+          // decrement-and-branch-on-non-zero.
+          if (--iters_until_check != 0)
+          {
+            Aal::pause();
+            continue;
+          }
+
+          // Sample the clock and check the quiescence timeout.
+          uint64_t tsc_now = DefaultPal::tick();
+          if (tsc_start == 0)
+          {
+            // First sample in this quiescence window: record the
+            // baseline timestamps and start the next spin slice without
+            // checking the timeout yet.
+            tsc_start = tsc_now;
+            tsc_prev = tsc_now;
+            iters_until_check = budget;
+            Aal::pause();
+            continue;
+          }
+          if ((tsc_now - tsc_start) < TSC_QUIESCENCE_TIMEOUT)
+          {
+            // We just spun `budget` iterations in (tsc_now - tsc_prev) ns.
+            // Rescale `budget` so the next wall-clock sample lands roughly
+            // STEAL_TARGET_SLICE_NS later, giving us about
+            // STEAL_TICKS_PER_TIMEOUT clock reads per full timeout window.
+            uint64_t elapsed_slice = tsc_now - tsc_prev;
+            if (elapsed_slice > 0)
+            {
+              budget = std::clamp(
+                (budget * STEAL_TARGET_SLICE_NS) / elapsed_slice,
+                STEAL_INITIAL_BUDGET,
+                STEAL_MAX_BUDGET);
+            }
+            tsc_prev = tsc_now;
+            iters_until_check = budget;
+            Aal::pause();
+            continue;
+          }
+
+          // Quiescence timeout exceeded — break to the outer loop
+          // which will call pause() and then re-initialise the timers.
+          break;
+#endif
+        }
+
+        // We've been spinning looking for work for some time. While paused,
+        // our running flag may be set to false, in which case we terminate.
+        if (Scheduler::get().pause())
+          core->stats.pause();
+      }
+
+      return nullptr;
+    }
+
+    SchedulerStats& get_stats()
+    {
+      if (core != nullptr)
+        return core->stats;
+
+      return SchedulerStats::get_global();
+    }
+  };
+
+  using Scheduler = ThreadPool<SchedulerThread>;
+} // namespace verona::rt
+
+namespace Logging
+{
+  using namespace verona::rt;
+
+  inline std::string create_systematic_id()
+  {
+#if defined(USE_SYSTEMATIC_TESTING) || defined(USE_FLIGHT_RECORDER)
+    static std::atomic<size_t> external_id_source = 1;
+    static thread_local size_t external_id = 0;
+    auto s = verona::rt::Scheduler::local();
+    if (s != nullptr)
+    {
+      std::stringstream ss;
+      auto offset = static_cast<int>(s->systematic_id % 9);
+      if (offset != 0)
+        ss << std::setw(offset) << " ";
+      ss << s->systematic_id;
+      ss << std::setw(9 - offset) << " ";
+      return ss.str();
+    }
+    if (external_id == 0)
+    {
+      auto e = external_id_source.fetch_add(1);
+      external_id = e;
+    }
+    std::stringstream ss;
+    bool short_id = external_id <= 26;
+    unsigned char spaces = short_id ? 9 : 8;
+    // Modulo guarantees that this fits into the same type as spaces.
+    decltype(spaces) offset =
+      static_cast<decltype(spaces)>((external_id - 1) % spaces);
+    if (offset != 0)
+      ss << std::setw(spaces - offset) << " ";
+    if (short_id)
+      ss << (char)('a' + (external_id - 1));
+    else
+      ss << 'E' << (external_id - 26);
+    ss << std::setw(offset) << " ";
+    return ss.str();
+#else
+    return "";
+#endif
+  }
+
+  inline const std::string& get_systematic_id()
+  {
+    static thread_local std::string id = create_systematic_id();
+    return id;
+  }
+}
