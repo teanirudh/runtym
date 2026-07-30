@@ -58,6 +58,12 @@ namespace verona::cpp
 
     template<typename TT, typename... Args>
     friend cown_ptr<TT> make_cown(Args&&... ts);
+
+    template<typename TT, typename... Args>
+    friend cown_ptr<TT> make_cown_custom(void *addr, Args&&... ts);
+
+    template<typename TT>
+    friend cown_ptr<TT> get_cown_ptr_from_addr(void *addr);
   };
 
   /**
@@ -314,6 +320,17 @@ namespace verona::cpp
       return {allocated_cown};
     }
 
+    void prefetch() const
+    {
+      if (allocated_cown != nullptr)
+        __builtin_prefetch(&allocated_cown->value);
+    }
+
+    uint64_t get_base_addr() const
+    {
+      return reinterpret_cast<uint64_t>(allocated_cown);
+    }
+
     ~cown_ptr()
     {
       clear();
@@ -329,6 +346,12 @@ namespace verona::cpp
     // but C++ doesn't like this.
     template<typename TT, typename... Args>
     friend cown_ptr<TT> make_cown(Args&&...);
+
+    template<typename TT, typename... Args>
+    friend cown_ptr<TT> make_cown_custom(void *addr, Args&&...);
+
+    template<typename TT>
+    friend cown_ptr<TT> get_cown_ptr_from_addr(void *addr);
   };
 
   /* A cown_ptr<const T> is used to mark that the cown is being accessed as
@@ -366,6 +389,25 @@ namespace verona::cpp
       "use case.");
     Scheduler::stats().cown();
     return cown_ptr<T>(new ActualCown<T>(std::forward<Args>(ts)...));
+  }
+
+  template<typename T, typename... Args>
+  cown_ptr<T> make_cown_custom(void *addr, Args&&... ts)
+  {
+    static_assert(
+      !std::is_const_v<T>,
+      "Cannot make a cown of const type as this conflicts with read acquire "
+      "encoding trick. If we hit this assertion, raise an issue explaining the "
+      "use case.");
+    Scheduler::stats().cown();
+    return cown_ptr<T>(new (addr) ActualCown<T>(std::forward<Args>(ts)...));
+  }
+
+  template<typename T>
+  cown_ptr<T> get_cown_ptr_from_addr(void* addr)
+  {
+    ActualCown<T>* cown_ptr_addr = reinterpret_cast<ActualCown<T>*>(addr);
+    return cown_ptr(cown_ptr_addr);
   }
 
   template<typename T>

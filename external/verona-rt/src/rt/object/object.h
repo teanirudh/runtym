@@ -902,7 +902,10 @@ namespace verona::rt
 
     inline void dealloc()
     {
+      assert(0);
+#if 0
       heap::dealloc(&this->get_header(), size());
+#endif
     }
 
   protected:

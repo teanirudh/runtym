@@ -17,6 +17,12 @@ namespace verona::rt
 {
   using namespace snmalloc;
 
+  constexpr uint32_t MEM_ARRAY_SIZE = 64 * 1024 * 16;
+  constexpr uint32_t MEM_ARRAY_ELEM_SIZE = 896;
+  constexpr uint32_t MEM_ARRAY_ELEM_COUNT =
+    MEM_ARRAY_SIZE / MEM_ARRAY_ELEM_SIZE;
+  constexpr uint32_t MEM_ARRAY_HEADER_SIZE = 8;
+
   class BehaviourCore;
 
   inline Logging::SysLog& operator<<(Logging::SysLog&, BehaviourCore&);
@@ -528,6 +534,9 @@ namespace verona::rt
     std::atomic<size_t> exec_count_down;
     size_t count;
 
+    static inline char* mem_array = nullptr;
+    static inline uint32_t mem_array_idx = 0;
+
     /**
      * @brief Construct a new Behaviour object
      *
@@ -697,8 +706,15 @@ namespace verona::rt
       auto* chain_last_slot = ci.last_slot;
       auto* chain_first_slot = ci.first_slot;
 
+#if 0
       auto prev_slot =
         cown->last_slot.exchange(chain_last_slot, std::memory_order_acq_rel);
+#endif
+      auto prev_slot = cown->last_slot.load(std::memory_order_acquire);
+      if (prev_slot == nullptr)
+        cown->last_slot.store(chain_last_slot, std::memory_order_release);
+      else
+        prev_slot = cown->last_slot.exchange(chain_last_slot, std::memory_order_acq_rel);
 
       yield();
 
@@ -719,12 +735,14 @@ namespace verona::rt
         return;
       }
 
+#if 0
       while (prev_slot->is_wait_2pl())
       {
         Systematic::yield_until(
           [prev_slot]() { return !prev_slot->is_wait_2pl(); });
         Aal::pause();
       }
+#endif
 
       if (chain_first_slot->is_read_only())
       {
@@ -925,7 +943,8 @@ namespace verona::rt
       Logging::cout() << "Finished Behaviour " << *behaviour << Logging::endl;
       behaviour->release_all();
       if (!reuse)
-        heap::dealloc(work);
+        *(reinterpret_cast<char*>(reinterpret_cast<void*>(work)) -
+      MEM_ARRAY_HEADER_SIZE) = 'a';
       else
         behaviour->reset();
     }
@@ -941,7 +960,9 @@ namespace verona::rt
     void dealloc()
     {
       Logging::cout() << "Deallocating Behaviour " << *this << Logging::endl;
-      heap::dealloc(as_work());
+      auto* work = as_work();
+      *(reinterpret_cast<char*>(reinterpret_cast<void*>(work)) -
+        MEM_ARRAY_HEADER_SIZE) = 'a';
     }
 
     /**
@@ -1000,11 +1021,34 @@ namespace verona::rt
     {
       // Manual memory layout of the behaviour structure.
       //   | Work | Behaviour | Slot ... Slot | Body |
-      size_t size =
-        sizeof(Work) + sizeof(BehaviourCore) + (sizeof(Slot) * count) + payload;
-      void* base = heap::alloc(size);
+      size_t size = sizeof(Work) + sizeof(BehaviourCore) +
+        (sizeof(Slot) * count) + payload + MEM_ARRAY_HEADER_SIZE;
+      assert(size <= MEM_ARRAY_ELEM_SIZE);
 
-      Work* work = new (base) Work(f);
+      if (mem_array == nullptr)
+      {
+        size_t arr_sz = MEM_ARRAY_SIZE * MEM_ARRAY_ELEM_SIZE;
+        if (
+          posix_memalign(
+            reinterpret_cast<void**>(&mem_array),
+            1 << 21, // HUGE_PAGE - 2MB
+            arr_sz) != 0)
+          std::cout << "failed to alloc hugepage\n" << std::endl;
+
+        madvise(mem_array, arr_sz, MADV_HUGEPAGE);
+        memset(mem_array, 0, arr_sz);
+      }
+      char* base;
+      do
+      {
+        base = &mem_array[mem_array_idx++ * MEM_ARRAY_ELEM_SIZE];
+        if (mem_array_idx >= MEM_ARRAY_ELEM_COUNT)
+          mem_array_idx = 0;
+      } while (*base == 'x');
+      *base = 'x';
+
+      Work* work =
+        new (reinterpret_cast<void*>(base + MEM_ARRAY_HEADER_SIZE)) Work(f);
       void* base_behaviour = from_work(work);
       BehaviourCore* behaviour = new (base_behaviour) BehaviourCore(count);
 
@@ -1313,11 +1357,14 @@ namespace verona::rt
           return std::get<1>(i)->cown() < std::get<1>(j)->cown();
 #endif
       };
+      assert(body_count == 1);
+#if 0
       if (cown_count > 1)
         std::sort(
           cown_to_behaviour_slot_map.get(),
           cown_to_behaviour_slot_map.get() + cown_count,
           compare);
+#endif
 
       size_t i = 0;
       size_t chain_count = 0;
