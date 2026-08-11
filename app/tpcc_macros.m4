@@ -32,6 +32,7 @@ define(`__NEW_ORDER_CASE', `
   {
   GET_COWN_PTRS($1)
   WHEN(WHEN_PARAMS($1)) << [=]PARAMS(LAMBDA_PARAMS($1)) {
+    NEWORDER_BEGIN();
     WAREHOUSE_OP();
     Order o = Order(txm->params[0], txm->params[1], _d->d_next_o_id);
     NewOrder no = NewOrder(txm->params[0], txm->params[1], _d->d_next_o_id);

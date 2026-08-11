@@ -17,4 +17,6 @@ app/tpcc_gen.cc
 
 app/pipeline-profile/pipeline
 
+app/tpcc/gen-log/__pycache__/*
+
 results/
