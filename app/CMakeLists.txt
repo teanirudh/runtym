@@ -64,7 +64,7 @@ add_executable(tpcc ${CMAKE_SOURCE_DIR}/tpcc_gen.cc)
 # add_compile_definitions(CORE_PIPE)
 # add_compile_definitions(INDEXER)
 add_compile_definitions(SINGLE_TABLE)
-#add_compile_definitions(WAREHOUSE_SPLIT)
+add_compile_definitions(WAREHOUSE_SPLIT)
 
 target_include_directories(tpcc PRIVATE ../src/misc)
 target_include_directories(tpcc PRIVATE ../src/doradd)

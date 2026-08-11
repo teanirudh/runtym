@@ -1,8 +1,9 @@
 APP := app
 DIR := $(APP)/build
 YCSB_LOG := $(APP)/ycsb/gen-log
+TPCC_LOG := $(APP)/tpcc/gen-log
 
-.PHONY: gen-ycsb build-ycsb run-ycsb clean
+.PHONY: gen-ycsb build-ycsb run-ycsb gen-tpcc build-tpcc run-tpcc clean
 
 gen-ycsb:
 	@test -n "$(RD)" -a -n "$(WR)" || \
@@ -30,5 +31,29 @@ run-ycsb:
 	sudo taskset -c "$$ws-$$we" ./ycsb -n $(NC) "$$src" -i $(IN); \
 	end=$$(date +%s); echo "time taken: $$((end - start)) seconds"
 
+gen-tpcc:
+	@test -n "$(WH)" || \
+	  { echo "usage: make gen-tpcc WH=<warehouses>"; exit 1; }
+	@cd $(TPCC_LOG) && python3 generate_tpcc.py --warehouses $(WH)
+
+build-tpcc:
+	@test -n "$(WH)" || \
+	  { echo "usage: make build-tpcc WH=<warehouses>"; exit 1; }
+	@cmake -S $(APP) -B $(DIR) -G Ninja -DCMAKE_BUILD_TYPE=Release \
+	  -DCMAKE_CXX_FLAGS="-DRPC_LATENCY -DLOG_LATENCY -DNUM_WAREHOUSES=$(WH)" && \
+	cmake --build $(DIR) --target tpcc && mkdir -p $(DIR)/results
+
+run-tpcc:
+	@test -n "$(NC)" -a -n "$(IN)" || \
+	  { echo "usage: make run-tpcc NC=<num_cores> IN=<interval>"; exit 1; }
+	@test -f $(DIR)/tpcc || \
+	  { echo "error: missing build $(DIR)/tpcc"; exit 1; }
+	@src="$(CURDIR)/$(TPCC_LOG)/tpcc.txt"; \
+	test -f "$$src" || { echo "missing input: $$src (run make gen-tpcc WH=...)"; exit 1; }; \
+	cd $(DIR) && we=$$(($(shell nproc) - 1)); ws=$$((we - $(NC) + 1)); \
+	start=$$(date +%s); \
+	sudo taskset -c "$$ws-$$we" ./tpcc -n $(NC) "$$src" -i $(IN); \
+	end=$$(date +%s); echo "time taken: $$((end - start)) seconds"
+
 clean:
-	rm -rf $(APP)/build $(YCSB_LOG)/*.txt
+	rm -rf $(APP)/build $(YCSB_LOG)/*.txt $(TPCC_LOG)/tpcc.txt

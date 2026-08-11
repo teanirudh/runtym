@@ -3,12 +3,16 @@
 #include "tpcc/generator.hpp"
 #include "txcounter.hpp"
 
+#include <atomic>
 #include <cpp/when.h>
 #include <thread>
 #include <unordered_map>
 
 using namespace verona::rt;
 using namespace verona::cpp;
+
+static std::atomic<uint64_t> exec_time{0};
+static std::atomic<uint64_t> exec_count{0};
 
 #define UPDATE_STOCK(_INDEX) \
   { \
@@ -166,6 +170,9 @@ public:
   }
 #endif // INDEXER
 
+#define NEWORDER_BEGIN() \
+  auto ts = time_ns();
+
 #ifdef LOG_LATENCY
 #define NEWORDER_END() \
   { \
@@ -173,6 +180,9 @@ public:
     cown_ptr<NewOrder> no_cown = make_cown<NewOrder>(no); \
     index->order_table.insert_row(order_hash_key, std::move(o_cown)); \
     index->new_order_table.insert_row(neworder_hash_key, std::move(no_cown)); \
+    auto te = time_ns(); \
+    exec_time.fetch_add(te - ts, std::memory_order_relaxed); \
+    exec_count.fetch_add(1, std::memory_order_relaxed); \
     TxCounter::instance().incr(); \
     TxCounter::instance().log_latency(init_time); \
   }
@@ -183,6 +193,9 @@ public:
     cown_ptr<NewOrder> no_cown = make_cown<NewOrder>(no); \
     index->order_table.insert_row(order_hash_key, std::move(o_cown)); \
     index->new_order_table.insert_row(neworder_hash_key, std::move(no_cown)); \
+    auto te = time_ns(); \
+    exec_time.fetch_add(te - ts, std::memory_order_relaxed); \
+    exec_count.fetch_add(1, std::memory_order_relaxed); \
     TxCounter::instance().incr(); \
   }
 #endif
@@ -237,6 +250,7 @@ public:
       uint32_t h_amount = txm->params[52];
 
       WHEN(d, c) << [=]PARAMS(auto _d, auto _c) {
+        auto ts = time_ns();
         WAREHOUSE_OP();
         // Update district balance
         _d->d_ytd += h_amount;
@@ -245,6 +259,9 @@ public:
         _c->c_balance -= h_amount;
         _c->c_ytd_payment += h_amount;
         _c->c_payment_cnt += 1;
+        auto te = time_ns();
+        exec_time.fetch_add(te - ts, std::memory_order_relaxed);
+        exec_count.fetch_add(1, std::memory_order_relaxed);
 
 #ifdef LOG_LATENCY
         TxCounter::instance().log_latency(init_time);
@@ -331,6 +348,14 @@ int main(int argc, char** argv)
   gen.generateOrdersAndOrderLines();
 
   build_pipelines<TPCCTransaction>(core_cnt - 1, input_file, gen_file);
+
+  const uint64_t n = exec_count.load(std::memory_order_relaxed);
+  const uint64_t t = exec_time.load(std::memory_order_relaxed);
+  if (n > 0)
+  {
+    auto mean_exec = static_cast<double>(t) / static_cast<double>(n) / 1000.0;
+    printf("mean_txn_exec: %.3f us\n", mean_exec);
+  }
 
   // Cleanup
   delete TPCCTransaction::index;

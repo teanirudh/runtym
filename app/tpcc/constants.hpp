@@ -6,7 +6,7 @@
 const uint64_t NUM_TRANSACTIONS = 3200 * 2;
 const uint64_t MAX_ORDER_TRANSACTIONS = (NUM_TRANSACTIONS / 10) * 6;
 
-const uint32_t NUM_WAREHOUSES = 1;
+// const uint32_t NUM_WAREHOUSES = 1;
 const uint8_t MONEY_DECIMALS = 2;
 
 // Item constants
