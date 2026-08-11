@@ -1,49 +1,34 @@
 APP := app
-NPROC := $(shell nproc)
+DIR := $(APP)/build
+YCSB_LOG := $(APP)/ycsb/gen-log
 
-DIR := $(APP)/$(if $(filter release,$(MODE)),build,build-dbg)
-TYPE := $(if $(filter release,$(MODE)),Release,Debug)
-SUDO := $(if $(filter release,$(MODE)),sudo,)
+.PHONY: gen-ycsb build-ycsb run-ycsb clean
 
-.PHONY: generate build run clean
+gen-ycsb:
+	@test -n "$(RD)" -a -n "$(WR)" || \
+	  { echo "usage: make gen RD=<reads> WR=<writes>"; exit 1; }
+	@cd $(YCSB_LOG) && \
+	  g++ -O3 -DRD=$(RD) -DWR=$(WR) -DHR=$(or $(HR),0) -DHW=$(or $(HW),0) \
+	  -o generator generate_ycsb_zipf.cc && ./generator
 
-generate:
-	@case "$(BENCH)" in \
-	  ycsb) test -n "$(DIST)" || { echo "usage: make generate BENCH=ycsb DIST=zipfian|uniform"; exit 1; }; \
-	        cd $(APP)/ycsb/gen-log && \
-	        g++ -o generator -O3 generate_ycsb_zipf.cc; \
-	        ./generator -d $(DIST) -c no_cont; \
-	        ./generator -d $(DIST) -c high_cont ;; \
-	  tpcc) test -f $(APP)/tpcc/gen-log/tpcc.txt || { \
-	          cd $(APP)/tpcc/gen-log && python3 generate_tpcc.py; } ;; \
-	  *) echo "usage: make generate BENCH=ycsb|tpcc [DIST=zipfian|uniform]"; exit 1 ;; \
-	esac
+build-ycsb:
+	@test -n "$(RD)" -a -n "$(WR)" || \
+	  { echo "usage: make build RD=<reads> WR=<writes>"; exit 1; }
+	@cmake -S $(APP) -B $(DIR) -G Ninja -DCMAKE_BUILD_TYPE=Release \
+	  -DCMAKE_CXX_FLAGS="-DRPC_LATENCY -DLOG_LATENCY -DRD=$(RD) -DWR=$(WR)" && \
+	cmake --build $(DIR) --target ycsb && mkdir -p $(DIR)/results
 
-build:
-	@test "$(MODE)" = debug -o "$(MODE)" = release || \
-	  { echo "usage: make build MODE=debug|release BENCH=ycsb|tpcc"; exit 1; }
-	@test "$(BENCH)" = ycsb -o "$(BENCH)" = tpcc || \
-	  { echo "usage: make build MODE=debug|release BENCH=ycsb|tpcc"; exit 1; }
-	@cmake -S $(APP) -B $(DIR) -G Ninja -DCMAKE_BUILD_TYPE=$(TYPE) \
-	  -DCMAKE_CXX_FLAGS="-DRPC_LATENCY -DLOG_LATENCY -g -fno-omit-frame-pointer" && \
-	cmake --build $(DIR) --target $(BENCH) && mkdir -p $(DIR)/results
-
-run:
-	@test -n "$(CORES)$(INTERVAL)$(SOURCE)" && \
-	  { test "$(MODE)" = debug -o "$(MODE)" = release; } && \
-	  { test "$(BENCH)" = ycsb -o "$(BENCH)" = tpcc; } || \
-	  { echo "usage: make run MODE=debug|release BENCH=ycsb|tpcc CORES=<n> INTERVAL=<spec> SOURCE=<file>"; exit 1; }
-	@test -f $(DIR)/$(BENCH) || \
-	  { echo "missing $(DIR)/$(BENCH) — run make build MODE=$(MODE) BENCH=$(BENCH)"; exit 1; }
-	@cd $(DIR) && test -f $(SOURCE) || { echo "missing input: $(DIR)/$(SOURCE)"; exit 1; }
-	@cd $(DIR) && worker_end=$$(($(NPROC) - 1)); worker_start=$$((worker_end - $(CORES) + 1)); \
-	echo "$(MODE) $(BENCH) cores=$(CORES) interval=$(INTERVAL) source=$(SOURCE)"; \
-	echo "dispatcher cores: 0-3"; echo "worker cores: $$worker_start-$$worker_end"; \
+run-ycsb:
+	@test -n "$(NC)" -a -n "$(IN)" -a -n "$(LG)" || \
+	  { echo "usage: make run NC=<num_cores> IN=<interval> LG=<log_file>"; exit 1; }
+	@test -f $(DIR)/ycsb || \
+	  { echo "error: missing build $(DIR)/ycsb"; exit 1; }
+	@src="$(CURDIR)/$(YCSB_LOG)/$(LG)"; \
+	test -f "$$src" || { echo "missing input: $$src"; exit 1; }; \
+	cd $(DIR) && we=$$(($(shell nproc) - 1)); ws=$$((we - $(NC) + 1)); \
 	start=$$(date +%s); \
-	$(SUDO) taskset -c "$$worker_start-$$worker_end" \
-	  ./$(BENCH) -n $(CORES) $(SOURCE) -i $(INTERVAL); \
-	end=$$(date +%s); echo "Time taken: $$((end - start)) seconds"
+	sudo taskset -c "$$ws-$$we" ./ycsb -n $(NC) "$$src" -i $(IN); \
+	end=$$(date +%s); echo "time taken: $$((end - start)) seconds"
 
 clean:
-	rm -rf $(APP)/build
-	rm -rf $(APP)/build-dbg
+	rm -rf $(APP)/build $(YCSB_LOG)/*.txt
