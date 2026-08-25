@@ -111,6 +111,7 @@ public:
       };
       auto ts = time_ns();
       (op(acq), ...);
+      simulate_work_us(SL);
       auto te = time_ns();
       exec_time.fetch_add(te - ts, std::memory_order_relaxed);
       exec_count.fetch_add(1, std::memory_order_relaxed);
