@@ -12,7 +12,7 @@ static_assert(RD + WR <= 64);
 static_assert(HR <= RD && HW <= WR);
 
 static constexpr uint64_t ROW_COUNT = 10'000'000;
-static constexpr uint32_t TX_COUNT = 1'000'000;
+static constexpr uint32_t TX_COUNT = 10'000'000;
 static constexpr int HOT_KEY_MSB_BITS = 6;
 static constexpr size_t PAD_SIZE = (64 - (((RD + WR) * 12 + 8) % 64)) % 64;
 static constexpr uint64_t WRITE_SET =

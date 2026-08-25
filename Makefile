@@ -16,7 +16,7 @@ build-ycsb:
 	@test -n "$(RD)" -a -n "$(WR)" || \
 	  { echo "usage: make build RD=<reads> WR=<writes>"; exit 1; }
 	@cmake -S $(APP) -B $(DIR) -G Ninja -DCMAKE_BUILD_TYPE=Release \
-	  -DCMAKE_CXX_FLAGS="-DRPC_LATENCY -DLOG_LATENCY -DRD=$(RD) -DWR=$(WR)" && \
+	  -DCMAKE_CXX_FLAGS="-DRPC_LATENCY -DLOG_LATENCY -DRD=$(RD) -DWR=$(WR) -DSL=$(or $(SL),0)" && \
 	cmake --build $(DIR) --target ycsb && mkdir -p $(DIR)/results
 
 run-ycsb:
