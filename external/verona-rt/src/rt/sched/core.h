@@ -15,8 +15,10 @@ namespace verona::rt
   {
   public:
     size_t affinity = 0;
+    size_t domain = 0;
     MPMCQ<Work> q;
     std::atomic<Core*> next{nullptr};
+    std::atomic<Core*> domain_next{nullptr};
     std::atomic<bool> should_steal_for_fairness{false};
 
     /// Progress and synchronization between the threads.

@@ -44,6 +44,7 @@ namespace verona::rt
       size_t package;
       size_t group;
       size_t id;
+      size_t domain;
       bool hyperthread;
 
       size_t get()
@@ -53,6 +54,11 @@ namespace verona::rt
 #else
         return id;
 #endif
+      }
+
+      size_t get_domain()
+      {
+        return domain;
       }
 
       bool operator<(const CPU& that) const
@@ -105,7 +111,11 @@ namespace verona::rt
       {
         if (CPU_ISSET(index, &all_cpus))
         {
-          cpus.push_back(CPU{0, 0, 0, index, false});
+#  ifndef DOMAIN_SIZE
+          cpus.push_back(CPU{0, 0, 0, index, 0, false});
+#  else
+          cpus.push_back(CPU{0, 0, 0, index, index / DOMAIN_SIZE, false});
+#  endif
           found++;
         }
 
@@ -150,11 +160,12 @@ namespace verona::rt
             if (idmask & p->Processor.GroupMask[j].Mask)
             {
               top->cpus.push_back(
-                CPU{get_numa_node(group, id, numa, numa_count),
-                    get_package(group, id, package, package_count),
-                    group,
-                    id,
-                    hyperthread});
+                CPU{
+                  get_numa_node(group, id, numa, numa_count),
+                  get_package(group, id, package, package_count),
+                  group,
+                  id,
+                  hyperthread});
 
               hyperthread = true;
             }
@@ -210,6 +221,15 @@ namespace verona::rt
 
       index = index % cpus.size();
       return cpus.at(index).get();
+    }
+
+    size_t get_domain(size_t index)
+    {
+      if (cpus.size() == 0)
+        abort();
+
+      index = index % cpus.size();
+      return cpus.at(index).get_domain();
     }
 
     size_t size()
@@ -308,14 +328,14 @@ namespace verona::rt
     PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX
     static next_info(PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX info)
     {
-      return (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)(
-        (char*)info + info->Size);
+      return (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)((char*)info +
+                                                        info->Size);
     }
 
     static void release_info(PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX info)
     {
       if (info != nullptr)
-        delete[]((char*)info);
+        delete[] ((char*)info);
     }
 #endif
   };

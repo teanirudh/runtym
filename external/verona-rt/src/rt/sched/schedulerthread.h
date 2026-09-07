@@ -194,7 +194,7 @@ namespace verona::rt
       Scheduler::local() = this;
       alloc = &ThreadAlloc::get();
       assert(core != nullptr);
-      victim = core->next;
+      victim = core->domain_next;
       core->servicing_threads++;
 
 #ifdef USE_SYSTEMATIC_TESTING
@@ -246,7 +246,7 @@ namespace verona::rt
       }
 
       // Move to the next victim thread.
-      victim = victim->next;
+      victim = victim->domain_next;
 
       return work;
     }
@@ -281,7 +281,7 @@ namespace verona::rt
         }
 
         // We were unable to steal, move to the next victim thread.
-        victim = victim->next;
+        victim = victim->domain_next;
 
 #ifdef USE_SYSTEMATIC_TESTING
         // Only try to pause with 1/(2^5) probability
