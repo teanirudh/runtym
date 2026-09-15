@@ -112,7 +112,18 @@ namespace verona::rt
      */
     ReadRefCount read_ref_count;
 
+    uintptr_t resource_id_{static_cast<uintptr_t>(-1)};
+    Core* home_core_{nullptr};
+
   public:
+    void assign_resource_id(uintptr_t resource_id)
+    {
+      resource_id_ = resource_id;
+      home_core_ = nullptr;
+    }
+
+    Core* home_core();
+
 #ifdef USE_SYSTEMATIC_TESTING_WEAK_NOTICEBOARDS
     std::vector<BaseNoticeboard*> noticeboards;
 
@@ -200,4 +211,13 @@ namespace verona::rt
     //   return true;
     // }
   };
+
+  inline Core* Cown::home_core()
+  {
+    if (resource_id_ == static_cast<uintptr_t>(-1))
+      return nullptr;
+    if (home_core_ == nullptr)
+      home_core_ = Scheduler::get_home_core(resource_id_);
+    return home_core_;
+  }
 } // namespace verona::rt

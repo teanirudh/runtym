@@ -20,7 +20,7 @@ void test_body()
   Logging::cout() << "test_body()" << Logging::endl;
 
   char *ptr = new char[1024];
-  auto log = make_cown_custom<Body>(reinterpret_cast<void *>(ptr));
+  auto log = make_cown_custom<Body>(reinterpret_cast<void*>(ptr), 0);
 
   when(log) << [=](auto) { Logging::cout() << "log" << Logging::endl; };
 

@@ -97,7 +97,8 @@ public:
       uint32_t warehouse_hash_key = _warehouse.hash_key();
 
       void* row_addr = (void *)(warehouse_table_addr + (uint64_t)(1024 * warehouse_hash_key));
-      cown_ptr<Warehouse> w = make_cown_custom<Warehouse>(row_addr, _warehouse);
+      cown_ptr<Warehouse> w =
+        make_cown_custom<Warehouse>(row_addr, warehouse_hash_key, _warehouse);
       db->warehouse_table.insert_row(warehouse_hash_key, w);
     }
 
@@ -151,7 +152,7 @@ public:
 
         db->district_table.insert_row(
           _district.hash_key(),
-          make_cown_custom<District>(row_addr, _district));
+          make_cown_custom<District>(row_addr, _district.hash_key(), _district));
 
         counter++;
       }
@@ -239,7 +240,8 @@ public:
 
           db->customer_table.insert_row(
             _customer.hash_key(),
-            make_cown_custom<Customer>(row_addr, _customer));
+            make_cown_custom<Customer>(
+              row_addr, _customer.hash_key(), _customer));
 
           // History
           History _history = History(w_id, d_id, c_id);
@@ -256,7 +258,8 @@ public:
 
           db->history_table.insert_row(
             _history.hash_key(),
-            make_cown_custom<History>(history_row_addr, _history));
+            make_cown_custom<History>(
+              history_row_addr, _history.hash_key(), _history));
         }
       }
     }
@@ -303,7 +306,8 @@ public:
       void* row_addr = item_table_addr + (1024 * _item.hash_key());
 
       db->item_table.insert_row(
-        _item.hash_key(), make_cown_custom<Item>(row_addr, _item));
+        _item.hash_key(),
+        make_cown_custom<Item>(row_addr, _item.hash_key(), _item));
     }
   }
 
@@ -390,7 +394,8 @@ public:
         void* row_addr = stock_table_addr + (1024 * _stock.hash_key());
 
         db->stock_table.insert_row(
-          _stock.hash_key(), make_cown_custom<Stock>(row_addr, _stock));
+          _stock.hash_key(),
+          make_cown_custom<Stock>(row_addr, _stock.hash_key(), _stock));
       }
     }
   }
@@ -437,13 +442,15 @@ public:
               order_line_table_addr + (1024 * hash_key));
 
             db->order_line_table.insert_row(
-              hash_key, make_cown_custom<OrderLine>(row_addr, _order_line));
+              hash_key,
+              make_cown_custom<OrderLine>(row_addr, hash_key, _order_line));
           }
 
           void* row_addr = order_table_addr + (1024 * _order.hash_key());
 
           db->order_table.insert_row(
-            _order.hash_key(), make_cown_custom<Order>(row_addr, _order));
+            _order.hash_key(),
+            make_cown_custom<Order>(row_addr, _order.hash_key(), _order));
         }
       }
     }

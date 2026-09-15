@@ -9,14 +9,15 @@ gen-ycsb:
 	@test -n "$(RD)" -a -n "$(WR)" || \
 	  { echo "usage: make gen RD=<reads> WR=<writes>"; exit 1; }
 	@cd $(YCSB_LOG) && \
-	  g++ -O3 -DRD=$(RD) -DWR=$(WR) -DHR=$(or $(HR),0) -DHW=$(or $(HW),0) \
+	  g++ -O3 -DRD=$(RD) -DWR=$(WR) -DZT=$(or $(ZT),0) -DHK=$(or $(HK),0) \
 	  -o generator generate_ycsb_zipf.cc && ./generator
 
 build-ycsb:
 	@test -n "$(RD)" -a -n "$(WR)" || \
 	  { echo "usage: make build RD=<reads> WR=<writes>"; exit 1; }
 	@cmake -S $(APP) -B $(DIR) -G Ninja -DCMAKE_BUILD_TYPE=Release \
-	  -DCMAKE_CXX_FLAGS="-DRPC_LATENCY -DLOG_LATENCY -DRD=$(RD) -DWR=$(WR) -DSL=$(or $(SL),0)" && \
+	  -DCMAKE_CXX_FLAGS="-DRPC_LATENCY -DLOG_LATENCY -DRD=$(RD) -DWR=$(WR) \
+	  -DSL=$(or $(SL),0) -DDS=$(or $(DS),0) -DHC=$(or $(HC),0)" && \
 	cmake --build $(DIR) --target ycsb && mkdir -p $(DIR)/results
 
 run-ycsb:

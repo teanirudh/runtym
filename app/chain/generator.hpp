@@ -44,7 +44,8 @@ public:
       uint64_t resource_hash_key = r_id - 1;
 
       void* row_addr = (void *)(resource_table_addr + (uint64_t)(1024 * resource_hash_key));
-      cown_ptr<Resource> w = make_cown_custom<Resource>(row_addr, _resource);
+      cown_ptr<Resource> w =
+        make_cown_custom<Resource>(row_addr, resource_hash_key, _resource);
       db->resource_table.insert_row(resource_hash_key, w);
     }
 
@@ -61,7 +62,8 @@ public:
       uint64_t user_hash_key = u_id - 1;
 
       void* row_addr = (void *)(user_table_addr + (uint64_t)(1024 * user_hash_key));
-      cown_ptr<User> w = make_cown_custom<User>(row_addr, _user);
+      cown_ptr<User> w =
+        make_cown_custom<User>(row_addr, user_hash_key, _user);
       db->user_table.insert_row(user_hash_key, w);
     }
 

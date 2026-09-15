@@ -8,7 +8,6 @@
 #include <cstdio>
 #include <cstring>
 #include <thread>
-#include <type_traits>
 #include <utility>
 
 static std::atomic<uint64_t> exec_time{0};
@@ -82,35 +81,36 @@ public:
     return static_cast<int>(TXN_BYTES);
   }
 
-  template<size_t... R, size_t... W>
+  template<size_t R, typename Acquired>
+  static void process_row(Acquired& row, uint64_t write_set, uint8_t& sum)
+  {
+    if ((write_set >> R) & 1ull)
+      memset(row->payload, sum, WRITE_SIZE);
+    else
+    {
+      for (int j = 0; j < ROW_SIZE; j++)
+        sum += row->payload[j];
+    }
+  }
+
+  template<size_t... ROWS>
   static void spawn(
     std::array<cown_ptr<YCSBRow>, ROWS_PER_TX>& rows,
+    uint64_t write_set,
 #ifdef RPC_LATENCY
     ts_type init_time,
 #endif
-    std::index_sequence<R...>,
-    std::index_sequence<W...>)
+    std::index_sequence<ROWS...>)
   {
 #ifdef RPC_LATENCY
-    when(read(rows[R])..., rows[RD + W]...) << [init_time](auto&&... acq)
+    when(rows[ROWS]...) << [write_set, init_time](auto&&... acq)
 #else
-    when(read(rows[R])..., rows[RD + W]...) << [](auto&&... acq)
+    when(rows[ROWS]...) << [write_set](auto&&... acq)
 #endif
     {
       uint8_t sum = 0;
-      auto op = [&](auto& a) {
-        if constexpr (std::is_const_v<std::remove_reference_t<decltype(*a)>>)
-        {
-          for (int j = 0; j < ROW_SIZE; j++)
-            sum += a->payload[j];
-        }
-        else
-        {
-          memset(a->payload, sum, WRITE_SIZE);
-        }
-      };
       auto ts = time_ns();
-      (op(acq), ...);
+      (process_row<ROWS>(acq, write_set, sum), ...);
       simulate_work_us(SL);
       auto te = time_ns();
       exec_time.fetch_add(te - ts, std::memory_order_relaxed);
@@ -140,11 +140,11 @@ public:
 
     spawn(
       rows,
+      txm->write_set,
 #ifdef RPC_LATENCY
       init_time,
 #endif
-      std::make_index_sequence<RD>{},
-      std::make_index_sequence<WR>{});
+      std::make_index_sequence<ROWS_PER_TX>{});
 
     return static_cast<int>(TXN_BYTES);
   }
@@ -178,7 +178,7 @@ int main(int argc, char** argv)
   for (uint64_t i = 0; i < DB_SIZE; i++)
   {
     cown_ptr<YCSBRow> cown_r = make_cown_custom<YCSBRow>(
-      reinterpret_cast<void*>(cown_arr_addr + (uint64_t)COWN_SLOT * i));
+      reinterpret_cast<void*>(cown_arr_addr + (uint64_t)COWN_SLOT * i), i);
 
     if (i > 0)
       assert((cown_r.get_base_addr() - cown_prev_addr) == COWN_SLOT);

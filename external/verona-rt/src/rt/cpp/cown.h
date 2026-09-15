@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include "sched/cown.h"
+
 #include <functional>
 #include <tuple>
 #include <utility>
@@ -50,6 +52,13 @@ namespace verona::cpp
     ActualCown(Args&&... ts) : value(std::forward<Args>(ts)...)
     {}
 
+    template<typename... Args>
+    ActualCown(uintptr_t resource_id, Args&&... ts)
+    : value(std::forward<Args>(ts)...)
+    {
+      this->assign_resource_id(resource_id);
+    }
+
     template<typename TT>
     friend class acquired_cown;
 
@@ -60,10 +69,11 @@ namespace verona::cpp
     friend cown_ptr<TT> make_cown(Args&&... ts);
 
     template<typename TT, typename... Args>
-    friend cown_ptr<TT> make_cown_custom(void *addr, Args&&... ts);
+    friend cown_ptr<TT>
+    make_cown_custom(void* addr, uintptr_t resource_id, Args&&... ts);
 
     template<typename TT>
-    friend cown_ptr<TT> get_cown_ptr_from_addr(void *addr);
+    friend cown_ptr<TT> get_cown_ptr_from_addr(void* addr);
   };
 
   /**
@@ -277,7 +287,7 @@ namespace verona::cpp
       other.allocated_cown = nullptr;
       return *this;
     }
-    
+
 #if 0
     static cown_ptr from_addr(void* addr)
     {
@@ -355,13 +365,14 @@ namespace verona::cpp
     friend cown_ptr<TT> make_cown(Args&&...);
 
     template<typename TT, typename... Args>
-    friend cown_ptr<TT> make_cown_custom(void *addr, Args&&...);
+    friend cown_ptr<TT>
+    make_cown_custom(void* addr, uintptr_t resource_id, Args&&...);
 
     template<typename...>
     friend class When;
 
     template<typename TT>
-    friend cown_ptr<TT> get_cown_ptr_from_addr(void *addr);
+    friend cown_ptr<TT> get_cown_ptr_from_addr(void* addr);
   };
 
   /* A cown_ptr<const T> is used to mark that the cown is being accessed as
@@ -375,7 +386,7 @@ namespace verona::cpp
   class cown_ptr<const T> : public cown_ptr<T>
   {
   public:
-    cown_ptr(const cown_ptr<T>& other) : cown_ptr<T>(other){};
+    cown_ptr(const cown_ptr<T>& other) : cown_ptr<T>(other) {};
   };
 
   template<typename T>
@@ -402,7 +413,7 @@ namespace verona::cpp
   }
 
   template<typename T, typename... Args>
-  cown_ptr<T> make_cown_custom(void *addr, Args&&... ts)
+  cown_ptr<T> make_cown_custom(void* addr, uintptr_t resource_id, Args&&... ts)
   {
     static_assert(
       !std::is_const_v<T>,
@@ -410,7 +421,8 @@ namespace verona::cpp
       "encoding trick. If we hit this assertion, raise an issue explaining the "
       "use case.");
     Scheduler::stats().cown();
-    return cown_ptr<T>(new (addr) ActualCown<T>(std::forward<Args>(ts)...));
+    return cown_ptr<T>(new (addr)
+                         ActualCown<T>(resource_id, std::forward<Args>(ts)...));
   }
 
   template<typename T>
@@ -419,7 +431,7 @@ namespace verona::cpp
     ActualCown<T>* cown_ptr_addr = reinterpret_cast<ActualCown<T>*>(addr);
     return cown_ptr(cown_ptr_addr);
   }
-  
+
   template<typename T>
   bool operator==(std::nullptr_t, const cown_ptr<T>& rhs)
   {

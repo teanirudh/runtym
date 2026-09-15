@@ -98,6 +98,14 @@ namespace verona::rt
       return get().core_pool.first_core;
     }
 
+    static Core* get_home_core(uintptr_t resource_id)
+    {
+      auto& pool = get().core_pool;
+      if (pool.cores.empty())
+        return nullptr;
+      return pool.cores[resource_id % pool.cores.size()];
+    }
+
     static void set_detect_leaks(bool b)
     {
       get().detect_leaks = b;
@@ -185,7 +193,7 @@ namespace verona::rt
       return nonlocal;
     }
 
-    static void schedule(Work* w)
+    static void schedule(Work* w, Core* home_core = nullptr)
     {
       auto* t = local();
 
@@ -195,7 +203,7 @@ namespace verona::rt
         return;
       }
 
-      auto* core = round_robin();
+      auto* core = home_core != nullptr ? home_core : round_robin();
       T::schedule_lifo(core, w);
     }
 

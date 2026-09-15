@@ -111,10 +111,10 @@ namespace verona::rt
       {
         if (CPU_ISSET(index, &all_cpus))
         {
-#  ifndef DOMAIN_SIZE
-          cpus.push_back(CPU{0, 0, 0, index, 0, false});
+#  if defined(DS) && (DS != 0)
+          cpus.push_back(CPU{0, 0, 0, index, index / DS, false});
 #  else
-          cpus.push_back(CPU{0, 0, 0, index, index / DOMAIN_SIZE, false});
+          cpus.push_back(CPU{0, 0, 0, index, 0, false});
 #  endif
           found++;
         }

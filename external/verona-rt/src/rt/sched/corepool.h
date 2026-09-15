@@ -5,6 +5,8 @@
 #include "core.h"
 #include "pal/threading.h"
 
+#include <vector>
+
 #ifdef USE_SYSTEM_MONITOR
 #  include "sysmonitor.h"
 #endif
@@ -23,16 +25,17 @@ namespace verona::rt
 
     inline static Singleton<Topology, &Topology::init> topology;
     Core* first_core = nullptr;
-    size_t core_count = 0;
+    std::vector<Core*> cores;
 
   public:
     constexpr CorePool() = default;
 
     void init(size_t count)
     {
-      core_count = count;
+      cores.resize(count);
       // TODO mjp: review allocation.
       first_core = new Core;
+      cores[0] = first_core;
       Core* t = first_core;
       size_t index = 0;
       size_t current_domain = -1;
@@ -61,6 +64,7 @@ namespace verona::rt
         {
           t->next = new Core;
           t = t->next;
+          cores[index] = t;
           count--;
         }
         else
@@ -87,8 +91,8 @@ namespace verona::rt
       delete first_core;
       count++;
       first_core = nullptr;
-      assert(count == core_count);
-      core_count = 0;
+      assert(count == cores.size());
+      cores.clear();
     }
 
 #ifndef NDEBUG

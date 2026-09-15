@@ -181,7 +181,14 @@ namespace verona::rt
       if (
         (exec_count_down.load(std::memory_order_acquire) == n) ||
         (exec_count_down.fetch_sub(n) == n))
-        Scheduler::schedule(as_work());
+      {
+        Core* home_core = nullptr;
+#if defined(HC) && (HC == 1)
+        if (count > 0)
+          home_core = get_slots()[0].cown->home_core();
+#endif
+        Scheduler::schedule(as_work(), home_core);
+      }
     }
 
     // TODO: When C++ 20 move to span.
