@@ -1,80 +1,39 @@
-# DORADD
+# runtym
 
-DORADD is a high-performance deterministic parallel runtime.
+Compares **round-robin** and **home-core** worker placement for deterministic parallel transactions.
 
-Deterministic parallel execution guarantees that given exactly the same input, it will produce the same output via parallel execution.
-This property is essential for building robust distributed and fault-tolerant systems, as well as simplifying testing and debugging processes.
-For instance, 
-each node in state machine replication needs to execute a pre-agreed sequence of operations where deterministic parallelism can mitigate the single-threaded bottleneck without incurring states divergence;
-deterministically parallel log replay can be applied to fast failure recovery and live migration;
-deterministic databases scale efficiently via bypassing the need of two-phase commit across partitions.
+Built on [DORADD](https://github.com/doradd-rt/doradd)’s dispatcher pipeline and [Verona-RT](https://github.com/microsoft/verona-rt). Toggle with `HC` at build time (`0` = round-robin, `1` = home-core).
 
-## References
-```
-@inproceedings{doradd,
-  title={DORADD: Deterministic Parallel Execution in the Era of Microsecond-Scale Computing},
-  author={Liu, Zhengqing and Unal, Musa and Parkinson, Matthew J and Kogias, Marios},
-  booktitle={Proceedings of the 30th ACM SIGPLAN Annual Symposium on Principles and Practice of Parallel Programming},
-  pages={282--296},
-  year={2025}
-}
-```
+## Scheduling Policy
 
-## Building
+When a procedure becomes ready, place it on a worker chosen from its **hottest** declared resource (warm/cold ignored):
 
-1. Clone and pull the submodules
-```
-git clone https://github.com/doradd-rt/doradd
-cd doradd
-git submodule update --init
-```
+1. Pick `resource_id = argmax access(resource)`
+2. Map `home = resource_id mod N`
+3. Enqueue on that worker’s queue
 
-2. Install dependencies on Linux (tested on Ubuntu 22.04)
+Same hot resource → same home. Distinct hot resources spread across workers.
 
-```
-sudo apt-get update
-sudo apt-get install -y pkg-config libssl-dev clang libclang-dev build-essential ninja-build cmake cpufrequtils htop python3-pip
-pip install numpy
-```
+Round-robin (`HC=0`) ignores resources and rotates cores instead.
 
-3. Build the YCSB and TPCC-NP benchmark
+## Experiment Workload
 
-```
-cd app/
-mkdir -p build && cd build
-mkdir -p results # collect stats
-cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-DRPC_LATENCY -DLOG_LATENCY"
-ninja
+Tiered YCSB: each transaction samples a fixed mix of hot / warm / cold keys (`HT` / `WM` / `CD`, with `HT+WM+CD = RD+WR`). The generator puts the hottest key first so home-core can use slot 0.
+
+## Quick Start
+
+Ubuntu 22.04. Needs `build-essential`, `cmake`, `ninja-build`, `python3`.
+
+```bash
+git clone https://github.com/teanirudh/runtym.git
+cd runtym
+
+make gen-ycsb-tier RD=5 WR=5 HT=1 WM=2 CD=7
+
+make build-ycsb RD=5 WR=5 HC=0
+make run-ycsb NC=8 IN=exp:10 LG=rd05_wr05_ht01_wm02_cd07.txt
+
+make build-ycsb RD=5 WR=5 HC=1
+make run-ycsb NC=8 IN=exp:10 LG=rd05_wr05_ht01_wm02_cd07.txt
 ```
 
-## Example workloads
-
-### 1. YCSB
-
-```
-# prepare the input log
-pushd app/ycsb/gen-log
-g++ -o generator -O3 generate_ycsb_zipf.cc 
-./generator -d uniform -c no_cont
-popd
-
-# run
-cd app/build
-sudo taskset -c 4-11 ./ycsb -n 8 ../ycsb/gen-log/ycsb_uniform_no_cont.txt -i exp:4000
-
-# -n: core counts
-# -i: the request arrival pattern (fixed or exponential) and interval (in nanoseconds) 
-```
-
-### 2. TPCC-NP
-
-```
-# prepare the input log
-pushd app/tpcc/gen-log
-python generate_tpcc.py --warehouses 23 
-popd
-
-# run
-cd app/build
-sudo taskset -c 4-11 ./tpcc -n 8 ../tpcc/gen-log/tpcc.txt -i exp:4000
-```
