@@ -63,8 +63,7 @@ public:
 
     for (uint32_t i = 0; i < ROWS_PER_TX; i++)
     {
-      auto&& cown = index->get_row(txm->indices[i]);
-      txm->cown_ptrs[i] = cown.get_base_addr();
+      txm->cown_ptrs[i] = index->get_row_addr(txm->indices[i])->get_base_addr();
     }
 
     return static_cast<int>(TXN_BYTES);
@@ -84,12 +83,16 @@ public:
   template<size_t R, typename Acquired>
   static void process_row(Acquired& row, uint64_t write_set, uint8_t& sum)
   {
+    char* field = row->payload;
     if ((write_set >> R) & 1ull)
-      memset(row->payload, sum, WRITE_SIZE);
+    {
+      for (uint32_t j = 0; j < WRITE_SIZE; j++)
+        field[j] = static_cast<char>(sum + static_cast<uint8_t>(j));
+    }
     else
     {
-      for (int j = 0; j < ROW_SIZE; j++)
-        sum += row->payload[j];
+      for (uint32_t j = 0; j < ROW_SIZE; j++)
+        sum = static_cast<uint8_t>(sum + static_cast<uint8_t>(field[j]));
     }
   }
 
@@ -111,6 +114,7 @@ public:
       uint8_t sum = 0;
       auto ts = time_ns();
       (process_row<ROWS>(acq, write_set, sum), ...);
+      volatile uint8_t sink = sum;
       simulate_work_us(SL);
       auto te = time_ns();
       exec_time.fetch_add(te - ts, std::memory_order_relaxed);

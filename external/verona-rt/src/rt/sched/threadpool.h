@@ -196,15 +196,11 @@ namespace verona::rt
     static void schedule(Work* w, Core* home_core = nullptr)
     {
       auto* t = local();
-
-      if (t != nullptr)
-      {
+      auto* core = home_core ? home_core : (t ? t->core : round_robin());
+      if (t && t->core == core)
         t->schedule_fifo(w);
-        return;
-      }
-
-      auto* core = home_core != nullptr ? home_core : round_robin();
-      T::schedule_lifo(core, w);
+      else
+        T::schedule_lifo(core, w);
     }
 
     void init(size_t count)

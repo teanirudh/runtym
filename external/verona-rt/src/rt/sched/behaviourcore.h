@@ -13,7 +13,7 @@ namespace verona::rt
   using namespace snmalloc;
 
   constexpr uint32_t MEM_ARRAY_SIZE = 64*1024*16;
-  constexpr uint32_t MEM_ARRAY_ELEM_SIZE = 896;
+  constexpr uint32_t MEM_ARRAY_ELEM_SIZE = 2048;
   constexpr uint32_t MEM_ARRAY_ELEM_COUNT = MEM_ARRAY_SIZE / MEM_ARRAY_ELEM_SIZE;
 
   class Request
@@ -224,9 +224,12 @@ namespace verona::rt
      
       if (mem_array == nullptr) 
       {
-        size_t arr_sz = MEM_ARRAY_SIZE * MEM_ARRAY_ELEM_SIZE;
+        constexpr size_t huge_page = 1 << 21;
+        size_t arr_sz = static_cast<size_t>(MEM_ARRAY_ELEM_COUNT) *
+          MEM_ARRAY_ELEM_SIZE;
+        arr_sz = (arr_sz + huge_page - 1) & ~(huge_page - 1);
         if (posix_memalign(reinterpret_cast<void**>(&mem_array), 
-          1 << 21, // HUGE_PAGE - 2MB
+          huge_page,
           arr_sz) != 0)
           std::cout << "failed to alloc hugepage\n" << std::endl;
 

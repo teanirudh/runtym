@@ -3,7 +3,7 @@ DIR := $(APP)/build
 YCSB_LOG := $(APP)/ycsb/gen-log
 TPCC_LOG := $(APP)/tpcc/gen-log
 
-.PHONY: gen-ycsb build-ycsb run-ycsb gen-tpcc build-tpcc run-tpcc clean
+.PHONY: gen-ycsb gen-ycsb-tier build-ycsb run-ycsb gen-tpcc build-tpcc run-tpcc clean
 
 gen-ycsb:
 	@test -n "$(RD)" -a -n "$(WR)" || \
@@ -11,6 +11,14 @@ gen-ycsb:
 	@cd $(YCSB_LOG) && \
 	  g++ -O3 -DRD=$(RD) -DWR=$(WR) -DZT=$(or $(ZT),0) -DHK=$(or $(HK),0) \
 	  -o generator generate_ycsb_zipf.cc && ./generator
+
+gen-ycsb-tier:
+	@test -n "$(RD)" -a -n "$(WR)" || \
+	  { echo "usage: make gen-ycsb-tier RD=<reads> WR=<writes> HT=<hot> WM=<warm> CD=<cold>"; exit 1; }
+	@cd $(YCSB_LOG) && \
+	  g++ -O3 -DRD=$(RD) -DWR=$(WR) -DSD=$(or $(SD),1234) \
+	  -DHT=$(or $(HT),0) -DWM=$(or $(WM),0) -DCD=$(or $(CD),$(shell echo $$(($(RD)+$(WR))))) \
+	  -o generator generate_ycsb_tier.cc && ./generator
 
 build-ycsb:
 	@test -n "$(RD)" -a -n "$(WR)" || \
